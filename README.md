@@ -1,5 +1,4 @@
-# Wither Launcher - GitHub Repository
-# https://github.com/yourusername/wither-launcher
+# Wither Launcher
 
 A cross-platform game launcher with Steam integration, custom game support, local playtime tracking, and a monochromatic Swiss editorial design aesthetic.
 
@@ -87,7 +86,7 @@ wither-launcher/
 └── wither-documentation.md     # Full project documentation
 ```
 
-## Modules
+## Modules of documentation
 
 | Module | Description |
 |--------|-------------|
@@ -126,7 +125,16 @@ For custom cover art:
 
 MIT License - See LICENSE file for details.
 
+## KNOWN ISSUES!
+-UI sidebar animation is buggy
+-Filter option in search doesn't work yet
+-while steam library is synced, app does not respond
+-gametime is only counted when game is used from launcher
+-steam does not close when steam game is closed
+note: only tested on windows
+
 ## Acknowledgments
 
 - Steam is a trademark of Valve Corporation
 - This project is not affiliated with Valve Corporation
+- This project contains agent-made code
