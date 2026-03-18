@@ -133,6 +133,14 @@ MIT License - See LICENSE file for details.
 -steam does not close when steam game is closed
 note: only tested on windows
 
+## Next steps!
+- Epic integration
+- Cloud saves sync
+- universal achievement tracking
+- controller support (steam input)
+- news section
+- game screenshot/gallery
+
 ## Acknowledgments
 
 - Steam is a trademark of Valve Corporation
