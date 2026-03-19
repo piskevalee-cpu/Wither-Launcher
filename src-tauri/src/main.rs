@@ -11,8 +11,8 @@ use db::Database;
 use log::info;
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, RunEvent};
-use tauri_plugin_dialog::DialogExt;
 
+#[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Mutex<Database>>,
 }
@@ -59,8 +59,12 @@ fn main() {
             commands::store::store_search,
             commands::store::store_browse,
             commands::store::open_url,
+            commands::launcher::get_proton_versions,
+            commands::launcher::get_proton_ge_releases,
+            commands::launcher::download_proton_ge,
+            commands::steam::auto_detect_steam_user,
         ])
-        .plugin(tauri_plugin_shell::init())
+
         .setup(|app| {
             // Initialize system tray
             tray::setup_tray(&app.handle())?;

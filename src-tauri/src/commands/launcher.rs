@@ -1,5 +1,5 @@
 // src-tauri/src/commands/launcher.rs
-// Updated with Module 10: Silent Steam Launch
+// Updated with Module 10: Silent Steam Launch + Linux Proton/native support
 
 use crate::AppState;
 use crate::process::steam_launcher;
@@ -139,26 +139,14 @@ pub async fn launch_game(
             started_at,
         })
     } else {
-        // Legacy: direct executable launch
+        // Custom game launch (with Linux native + Proton support)
         let exe_path = executable_path.ok_or("Missing executable path")?;
 
         if !is_installed {
             return Err("Game is not installed".to_string());
         }
 
-        use std::path::Path;
-        use std::process::Command;
-
-        let exe_path_obj = Path::new(&exe_path);
-        let working_dir = exe_path_obj.parent()
-            .ok_or("Invalid executable path")?
-            .to_str()
-            .ok_or("Invalid working directory")?;
-
-        let child = Command::new(&exe_path)
-            .current_dir(working_dir)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        let child = launch_custom_game(&exe_path, &state)?;
 
         let pid = child.id();
         let session_id = uuid::Uuid::new_v4().to_string();
@@ -211,8 +199,144 @@ pub async fn launch_game(
     }
 }
 
+/// Launch a custom (non-Steam) game, with Linux-specific handling
+fn launch_custom_game(
+    exe_path: &str,
+    state: &State<'_, AppState>,
+) -> Result<std::process::Child, String> {
+    use std::path::Path;
+    use std::process::Command;
+
+    let exe_path_obj = Path::new(exe_path);
+    let working_dir = exe_path_obj.parent()
+        .ok_or("Invalid executable path")?;
+
+    #[cfg(target_os = "linux")]
+    {
+        let extension = exe_path_obj.extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+
+        // Check if it's a Windows .exe → launch via Proton
+        if extension == "exe" {
+            return launch_via_proton(exe_path, working_dir, state);
+        }
+
+        // For .AppImage files, ensure they're executable
+        if extension == "appimage" {
+            let _ = Command::new("chmod")
+                .arg("+x")
+                .arg(exe_path)
+                .output();
+        }
+
+        // For .sh files or extensionless executables, ensure they're executable
+        if extension == "sh" || extension.is_empty() {
+            let _ = Command::new("chmod")
+                .arg("+x")
+                .arg(exe_path)
+                .output();
+        }
+
+        // Launch native Linux executable
+        info!("Launching native Linux game: {}", exe_path);
+        Command::new(exe_path)
+            .current_dir(working_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to launch game: {}", e))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = state; // suppress unused warning
+        Command::new(exe_path)
+            .current_dir(working_dir)
+            .spawn()
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// Launch a Windows .exe game via Proton on Linux
+#[cfg(target_os = "linux")]
+fn launch_via_proton(
+    exe_path: &str,
+    working_dir: &std::path::Path,
+    state: &State<'_, AppState>,
+) -> Result<std::process::Child, String> {
+    use std::process::Command;
+
+    // Get preferred Proton version from settings, or use default
+    let proton_path = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = db.get_connection();
+        let saved_path: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'proton_path'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+
+        if !saved_path.is_empty() {
+            std::path::PathBuf::from(saved_path)
+        } else {
+            // Use default Proton
+            match steam_launcher::get_default_proton() {
+                Some(v) => std::path::PathBuf::from(&v.path),
+                None => return Err("No Proton version found. Install Proton via Steam or download GE-Proton.".to_string()),
+            }
+        }
+    };
+
+    let proton_exe = proton_path.join("proton");
+    if !proton_exe.exists() {
+        return Err(format!("Proton executable not found at {:?}", proton_exe));
+    }
+
+    // Set up compatibility data paths
+    let home = std::env::var("HOME").unwrap_or_default();
+    let steam_root = format!("{}/.steam/steam", home);
+    let compat_data = format!("{}/.steam/steam/steamapps/compatdata/wither_custom", home);
+
+    // Ensure compat data directory exists
+    let _ = std::fs::create_dir_all(&compat_data);
+
+    info!("Launching via Proton: {:?} run {}", proton_exe, exe_path);
+
+    Command::new(&proton_exe)
+        .arg("run")
+        .arg(exe_path)
+        .current_dir(working_dir)
+        .env("STEAM_COMPAT_DATA_PATH", &compat_data)
+        .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &steam_root)
+        .spawn()
+        .map_err(|e| format!("Failed to launch via Proton: {}", e))
+}
+
 #[tauri::command]
 pub fn kill_game(_state: State<'_, AppState>, _game_id: String) -> Result<(), String> {
     // Placeholder - session tracking handled by frontend launchStore
     Ok(())
+}
+
+/// Get available Proton versions (Linux only, returns empty on other platforms)
+#[tauri::command]
+pub fn get_proton_versions() -> Result<Vec<steam_launcher::ProtonVersion>, String> {
+    Ok(steam_launcher::get_proton_versions())
+}
+
+/// Get available GE-Proton releases from GitHub
+#[tauri::command]
+pub async fn get_proton_ge_releases() -> Result<Vec<steam_launcher::ProtonGeRelease>, String> {
+    steam_launcher::fetch_proton_ge_releases().await
+}
+
+/// Download and install a GE-Proton release
+#[tauri::command]
+pub async fn download_proton_ge(
+    download_url: String,
+    tag_name: String,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    steam_launcher::download_and_install_proton_ge(&download_url, &tag_name, &app_handle).await
 }

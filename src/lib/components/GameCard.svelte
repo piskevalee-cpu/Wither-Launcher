@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Game } from '$lib/types';
   import { launchGame } from '$lib/api';
-  import { games, ui, launchState, isGameRunning, elapsedSeconds } from '$lib/stores';
+  import { games, ui, launchState, isGameRunning, elapsedSeconds, removeGame } from '$lib/stores';
   import EditGameModal from './EditGameModal.svelte';
 
   let { game, isMostRecent = false } = $props();
@@ -46,8 +46,19 @@
     return '/placeholder-cover.jpg';
   }
 
-  const coverUrl = getCoverDisplayUrl(game.cover_url);
+  const coverUrl = $state(getCoverDisplayUrl(game.cover_url));
+  let coverFailed = $state(false);
   
+  function handleCoverError() {
+    if (!coverFailed && game.steam_app_id) {
+      // Try Steam CDN header image as fallback
+      coverFailed = true;
+      const headerUrl = `https://cdn.cloudflare.steamstatic.com/steam/apps/${game.steam_app_id}/header.jpg`;
+      const img = document.querySelector(`[data-game-id="${game.id}"] img`) as HTMLImageElement;
+      if (img) img.src = headerUrl;
+    }
+  }
+
   // Calculate total playtime (Wither + Steam) in hours and minutes
   const totalPlaytimeSeconds = (game.wither_playtime_s || 0) + (game.steam_playtime_s || 0);
   const playtimeHours = Math.floor(totalPlaytimeSeconds / 3600);
@@ -63,7 +74,6 @@
     isLaunching = true;
     try {
       await launchGame(game.id);
-      // State will update from backend events via launchStore listener
     } catch (error) {
       console.error('Failed to launch game:', error);
       isLaunching = false;
@@ -82,12 +92,10 @@
   async function handleRemove() {
     if (confirm(`Remove "${game.name}" from your library?`)) {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        await invoke('remove_game', { gameId: game.id });
-        games.removeGame(game.id);
+        await removeGame(game.id);
       } catch (error) {
         console.error('Failed to remove game:', error);
-        alert('Failed to remove game');
+        alert('Failed to remove game: ' + error);
       }
     }
     closeContextMenu();
@@ -111,9 +119,9 @@
   });
 </script>
 
-<div class="game-card" oncontextmenu={handleContextMenu}>
+<div class="game-card" data-game-id={game.id} oncontextmenu={handleContextMenu}>
   <div class="card-image">
-    <img src={coverUrl} alt={game.name} />
+    <img src={coverUrl} alt={game.name} onerror={handleCoverError} />
     <div class="card-overlay">
       <button class="play-button" onclick={handleLaunch} disabled={isLaunching || isThisGameRunning}>
         {#if isLaunching}
@@ -165,6 +173,13 @@
         <span class="steam-playtime" title="Steam playtime">(+{Math.floor(game.steam_playtime_s / 3600)}h {Math.floor((game.steam_playtime_s % 3600) / 60)}m Steam)</span>
       {/if}
     </div>
+    <p class="card-id text-mono text-xs text-tertiary" title={game.id}>
+      {#if game.steam_app_id}
+        AppID: {game.steam_app_id}
+      {:else}
+        ID: {game.id.substring(0, 12)}…
+      {/if}
+    </p>
   </div>
 </div>
 
@@ -320,6 +335,12 @@
   .steam-playtime {
     font-size: 10px;
     color: var(--color-accent);
+  }
+
+  .card-id {
+    margin-top: 2px;
+    opacity: 0.5;
+    font-size: 9px;
   }
 </style>
 

@@ -65,6 +65,7 @@ export const specials = writable<SearchItem[]>([])
 export const currentAppDetails = writable<AppDetails | null>(null)
 export const searchResults = writable<SearchItem[]>([])
 export const searchQuery = writable<string>('')
+export { searchQuery as storeSearchQuery }
 export const isLoading = writable<boolean>(false)
 export const error = writable<string | null>(null)
 

@@ -91,7 +91,8 @@ INSERT OR IGNORE INTO settings (key, value) VALUES
   ('steamgriddb_api_key', ''),
   ('accent_color', '#D62828'),
   ('store_country_code', 'us'),
-  ('store_language', 'english');
+  ('store_language', 'english'),
+  ('proton_path', '');
 
 -- ─────────────────────────────────────────
 -- IMAGE CACHE

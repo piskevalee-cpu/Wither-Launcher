@@ -5,6 +5,23 @@ import { writable, derived, get } from 'svelte/store'
 import { invoke } from '@tauri-apps/api/core'
 import type { Game } from '$lib/types'
 
+// ── Steam tool/runtime filter ─────────────────────────────────
+// These patterns match names of Steam compatibility tools,
+// runtimes, and redistributables that should be hidden from the UI.
+const STEAM_TOOL_PATTERNS = [
+  /^proton\s/i,
+  /^proton-/i,
+  /steam linux runtime/i,
+  /steamworks common/i,
+  /^steam client/i,
+  /proton easyantiCheat runtime/i,
+  /proton battleye runtime/i,
+]
+
+function isSteamTool(name: string): boolean {
+  return STEAM_TOOL_PATTERNS.some(p => p.test(name))
+}
+
 // ── Raw data ──────────────────────────────────────────────────
 export const games = writable<Game[]>([])
 export const isLoading = writable<boolean>(false)
@@ -24,7 +41,8 @@ export const sortDir = writable<'asc' | 'desc'>('asc')
 export const filteredGames = derived(
   [games, searchQuery, activeFilters, sortKey, sortDir],
   ([$games, $query, $filters, $sort, $dir]) => {
-    let result = $games
+    // Filter out Steam tools/runtimes first
+    let result = $games.filter(g => !isSteamTool(g.name))
 
     // 1. Search filter (name match, case-insensitive)
     if ($query.trim()) {
@@ -71,14 +89,19 @@ export async function loadGames(): Promise<void> {
   isLoading.set(true)
   try {
     const result = await invoke<Game[]>('get_all_games')
-    games.set(result)
+    // Filter out Steam tools/runtimes at load time so they never appear in any view
+    games.set(result.filter(g => !isSteamTool(g.name)))
   } finally {
     isLoading.set(false)
   }
 }
 
 export async function addCustomGame(payload: { executable_path: string, name?: string }): Promise<void> {
-  const game = await invoke<Game>('add_custom_game', payload)
+  const game = await invoke<Game>('add_custom_game', {
+    executablePath: payload.executable_path,
+    name: payload.name ?? null,
+    launchArgs: null
+  })
   games.update(gs => [...gs, game])
 }
 

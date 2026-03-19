@@ -21,6 +21,167 @@ pub struct SteamUser {
     pub is_public: bool,
 }
 
+/// Auto-detect logged-in Steam user from local Steam config (loginusers.vdf)
+/// Works cross-platform: reads from the appropriate Steam config directory
+#[tauri::command]
+pub async fn auto_detect_steam_user(state: State<'_, AppState>) -> Result<Option<SteamUser>, String> {
+    use log::info;
+    
+    let steam_root = get_steam_root_for_debug();
+    let steam_root = match steam_root {
+        Some(p) => p,
+        None => {
+            info!("Steam root not found for auto-detect");
+            return Ok(None);
+        }
+    };
+
+    let loginusers_path = steam_root.join("config").join("loginusers.vdf");
+    if !loginusers_path.exists() {
+        info!("loginusers.vdf not found at {:?}", loginusers_path);
+        return Ok(None);
+    }
+
+    let content = std::fs::read_to_string(&loginusers_path)
+        .map_err(|e| format!("Failed to read loginusers.vdf: {}", e))?;
+
+    // Parse the VDF to find the most recent user (MostRecent = 1)
+    let (steamid, personaname) = match parse_loginusers_vdf(&content) {
+        Some(result) => result,
+        None => {
+            info!("No logged-in user found in loginusers.vdf");
+            return Ok(None);
+        }
+    };
+
+    info!("Auto-detected Steam user: {} ({})", personaname, steamid);
+
+    // Try to fetch avatar if API key is available
+    let api_key: String = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = db.get_connection();
+        conn.query_row(
+            "SELECT value FROM settings WHERE key = 'steam_api_key'",
+            [],
+            |row| row.get(0),
+        ).unwrap_or_default()
+    };
+
+    let (avatar, avatarfull) = if !api_key.is_empty() {
+        match crate::steam::web_api::fetch_player_summary(&api_key, &steamid).await {
+            Ok(player) => (player.avatar, player.avatarfull),
+            Err(_) => (String::new(), String::new()),
+        }
+    } else {
+        (String::new(), String::new())
+    };
+
+    let user = SteamUser {
+        steamid: steamid.clone(),
+        personaname: personaname.clone(),
+        avatar: avatar.clone(),
+        avatarfull: avatarfull.clone(),
+        profileurl: format!("https://steamcommunity.com/profiles/{}", steamid),
+        is_public: true,
+    };
+
+    // Save to settings
+    {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = db.get_connection();
+        
+        let _ = conn.execute(
+            "UPDATE settings SET value = ? WHERE key = 'steam_user_id'",
+            [steamid.as_str()],
+        );
+        let _ = conn.execute(
+            "UPDATE settings SET value = ? WHERE key = 'steam_username'",
+            [personaname.as_str()],
+        );
+        let _ = conn.execute(
+            "UPDATE settings SET value = ? WHERE key = 'steam_avatar_url'",
+            [avatar.as_str()],
+        );
+    }
+
+    Ok(Some(user))
+}
+
+/// Parse loginusers.vdf to find the most recently logged-in user
+fn parse_loginusers_vdf(content: &str) -> Option<(String, String)> {
+    let mut current_steamid = String::new();
+    let mut current_persona = String::new();
+    let mut current_most_recent = false;
+    let mut best_steamid = String::new();
+    let mut best_persona = String::new();
+    let mut best_timestamp: u64 = 0;
+    let mut in_user_block = false;
+    let mut depth = 0;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        
+        if trimmed == "{" {
+            depth += 1;
+            continue;
+        }
+        if trimmed == "}" {
+            if depth == 2 && in_user_block {
+                // End of a user block
+                if current_most_recent {
+                    return Some((current_steamid.clone(), current_persona.clone()));
+                }
+                // Track as fallback by timestamp
+                in_user_block = false;
+                current_most_recent = false;
+            }
+            depth -= 1;
+            continue;
+        }
+
+        if depth == 1 {
+            // Top level under "users" — this is a SteamID key
+            let parts: Vec<&str> = trimmed.split('"').collect();
+            if parts.len() >= 2 {
+                current_steamid = parts[1].to_string();
+                current_persona = String::new();
+                current_most_recent = false;
+                in_user_block = true;
+            }
+        }
+
+        if depth == 2 && in_user_block {
+            let parts: Vec<&str> = trimmed.split('"').collect();
+            if parts.len() >= 4 {
+                let key = parts[1].to_lowercase();
+                let value = parts[3].to_string();
+
+                match key.as_str() {
+                    "personaname" => current_persona = value,
+                    "mostrecent" => current_most_recent = value == "1",
+                    "timestamp" => {
+                        if let Ok(ts) = value.parse::<u64>() {
+                            if ts > best_timestamp {
+                                best_timestamp = ts;
+                                best_steamid = current_steamid.clone();
+                                best_persona = current_persona.clone();
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // If no MostRecent=1 found, use the one with highest timestamp
+    if !best_steamid.is_empty() {
+        Some((best_steamid, best_persona))
+    } else {
+        None
+    }
+}
+
 #[tauri::command]
 pub async fn steam_login(state: State<'_, AppState>) -> Result<SteamUser, String> {
     use crate::steam::openid::run_auth_flow;
@@ -147,9 +308,15 @@ pub fn get_steam_user(state: State<'_, AppState>) -> Result<Option<SteamUser>, S
 }
 
 #[tauri::command]
-pub fn sync_steam(state: State<'_, AppState>) -> Result<SyncResult, String> {
-    // This is a simplified version - full implementation in steam module
-    crate::steam::sync_steam_library(&state)
+pub async fn sync_steam(state: State<'_, AppState>) -> Result<SyncResult, String> {
+    // Run sync in a blocking thread to avoid freezing the UI
+    let state_clone = state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        // Create a temporary State-like wrapper
+        crate::steam::sync_steam_library_with_db(&state_clone.db)
+    })
+    .await
+    .map_err(|e| format!("Sync task failed: {}", e))?
 }
 
 #[tauri::command]
@@ -183,7 +350,6 @@ pub fn get_steam_games(state: State<'_, AppState>) -> Result<Vec<serde_json::Val
 #[tauri::command]
 pub fn debug_steam_paths() -> Result<serde_json::Value, String> {
     use crate::steam::acf_parser::parse_library_folders;
-    use std::path::PathBuf;
     
     let mut debug_info = serde_json::json!({
         "steam_root": null,
@@ -191,7 +357,46 @@ pub fn debug_steam_paths() -> Result<serde_json::Value, String> {
         "acf_files": []
     });
 
-    // Get Steam root from registry
+    // Get Steam root path (cross-platform)
+    let steam_root = get_steam_root_for_debug();
+
+    if let Some(ref root_path) = steam_root {
+        debug_info["steam_root"] = serde_json::json!(root_path.to_string_lossy().to_string());
+
+        let vdf_path = root_path.join("steamapps").join("libraryfolders.vdf");
+        if vdf_path.exists() {
+            if let Ok(paths) = parse_library_folders(&vdf_path) {
+                debug_info["library_folders"] = serde_json::json!(
+                    paths.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>()
+                );
+
+                // Scan for .acf files
+                let mut acf_files = Vec::new();
+                for steam_path in &paths {
+                    let steamapps = steam_path.join("steamapps");
+                    if steamapps.exists() {
+                        if let Ok(entries) = std::fs::read_dir(&steamapps) {
+                            for entry in entries.flatten() {
+                                let path = entry.path();
+                                if path.extension().map_or(false, |ext| ext == "acf") {
+                                    acf_files.push(path.to_string_lossy().to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                debug_info["acf_files"] = serde_json::json!(acf_files);
+            }
+        }
+    }
+
+    Ok(debug_info)
+}
+
+/// Cross-platform Steam root detection for debug command
+fn get_steam_root_for_debug() -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+
     #[cfg(target_os = "windows")]
     {
         use winreg::enums::*;
@@ -201,38 +406,49 @@ pub fn debug_steam_paths() -> Result<serde_json::Value, String> {
         
         if let Ok(key) = hklm.open_subkey("SOFTWARE\\WOW6432Node\\Valve\\Steam") {
             if let Ok(path) = key.get_value::<String, _>("InstallPath") {
-                debug_info["steam_root"] = serde_json::json!(path);
-                
-                let vdf_path = PathBuf::from(&path).join("steamapps").join("libraryfolders.vdf");
-                if vdf_path.exists() {
-                    if let Ok(paths) = parse_library_folders(&vdf_path) {
-                        debug_info["library_folders"] = serde_json::json!(
-                            paths.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>()
-                        );
-                        
-                        // Scan for .acf files
-                        let mut acf_files = Vec::new();
-                        for steam_path in &paths {
-                            let steamapps = steam_path.join("steamapps");
-                            if steamapps.exists() {
-                                if let Ok(entries) = std::fs::read_dir(&steamapps) {
-                                    for entry in entries.flatten() {
-                                        let path = entry.path();
-                                        if path.extension().map_or(false, |ext| ext == "acf") {
-                                            acf_files.push(path.to_string_lossy().to_string());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        debug_info["acf_files"] = serde_json::json!(acf_files);
-                    }
+                return Some(PathBuf::from(path));
+            }
+        }
+        
+        if let Ok(key) = hklm.open_subkey("SOFTWARE\\Valve\\Steam") {
+            if let Ok(path) = key.get_value::<String, _>("InstallPath") {
+                return Some(PathBuf::from(path));
+            }
+        }
+
+        let default = PathBuf::from(r"C:\Program Files (x86)\Steam");
+        if default.exists() {
+            return Some(default);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            let candidates = vec![
+                format!("{}/.steam/steam", home),
+                format!("{}/.local/share/Steam", home),
+            ];
+            for path_str in candidates {
+                let path = PathBuf::from(path_str);
+                if path.exists() {
+                    return Some(path);
                 }
             }
         }
     }
 
-    Ok(debug_info)
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            let path = PathBuf::from(format!("{}/Library/Application Support/Steam", home));
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    None
 }
 
 #[tauri::command]
@@ -276,14 +492,27 @@ pub fn clear_removed_steam_games(state: State<'_, AppState>) -> Result<i64, Stri
 
 #[tauri::command]
 pub fn read_acf_file(app_id: u32) -> Result<String, String> {
-    use std::path::PathBuf;
-    
-    // Try to find the ACF file
-    let steam_path = PathBuf::from(r"C:\Program Files (x86)\Steam");
-    let acf_path = steam_path.join("steamapps").join(format!("appmanifest_{}.acf", app_id));
+    // Use cross-platform Steam root detection
+    let steam_root = get_steam_root_for_debug()
+        .ok_or("Steam installation not found")?;
+
+    let acf_path = steam_root.join("steamapps").join(format!("appmanifest_{}.acf", app_id));
     
     if !acf_path.exists() {
-        return Err(format!("ACF file not found: {:?}", acf_path));
+        // Also check additional library folders
+        let vdf_path = steam_root.join("steamapps").join("libraryfolders.vdf");
+        if vdf_path.exists() {
+            if let Ok(paths) = crate::steam::acf_parser::parse_library_folders(&vdf_path) {
+                for lib_path in paths {
+                    let alt_acf = lib_path.join("steamapps").join(format!("appmanifest_{}.acf", app_id));
+                    if alt_acf.exists() {
+                        return std::fs::read_to_string(&alt_acf)
+                            .map_err(|e| format!("Failed to read file: {}", e));
+                    }
+                }
+            }
+        }
+        return Err(format!("ACF file not found for AppID {}", app_id));
     }
     
     std::fs::read_to_string(&acf_path)

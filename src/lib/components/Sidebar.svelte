@@ -1,8 +1,8 @@
 <script lang="ts">
   import NavItem from './NavItem.svelte';
   import SyncStatusDot from './SyncStatusDot.svelte';
-  import { games, ui } from '$lib/stores';
-  import { getAllGames, addCustomGame, syncSteam } from '$lib/api';
+  import { games, refreshAfterSync, ui, addCustomGame } from '$lib/stores';
+  import { syncSteam } from '$lib/api';
   import { open } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
 
@@ -26,29 +26,38 @@
 
   async function handleAddGame() {
     try {
+      // Determine file filter based on platform
       const filePath = await open({
         title: 'Select Game Executable',
         multiple: false,
-        filters: [{
-          name: 'All Files',
-          extensions: ['*']
-        }]
+        filters: [
+          {
+            name: 'Game Executables',
+            extensions: ['exe', 'sh', 'AppImage', 'x86_64', 'x86', '']
+          },
+          {
+            name: 'All Files',
+            extensions: ['*']
+          }
+        ]
       });
 
       console.log('Selected file:', filePath);
 
       if (filePath) {
         ui.setLoading(true);
-        const game = await addCustomGame({
-          executable_path: filePath as string
-        });
-        console.log('Added game:', game);
-        games.addGame(game);
-        ui.setLoading(false);
+        try {
+          await addCustomGame({ executable_path: filePath as string });
+          ui.setLoading(false);
+        } catch (error) {
+          console.error('Failed to add game:', error);
+          alert('Failed to add game: ' + error);
+          ui.setLoading(false);
+        }
       }
     } catch (error) {
-      console.error('Failed to add game:', error);
-      alert('Failed to add game: ' + error);
+      console.error('Failed to open file dialog:', error);
+      alert('Failed to open file dialog: ' + error);
       ui.setLoading(false);
     }
   }
@@ -57,8 +66,7 @@
     try {
       ui.setLoading(true);
       const result = await syncSteam();
-      const allGames = await getAllGames();
-      games.set(allGames);
+      await refreshAfterSync();
       ui.setLoading(false);
       alert(`Steam sync complete!\nAdded: ${result.added}\nUpdated: ${result.updated}\nRemoved: ${result.removed}`);
     } catch (error) {
@@ -144,12 +152,17 @@
     padding: var(--space-4);
     gap: var(--space-3);
     width: 220px;
+    min-width: 220px;
     position: relative;
     overflow: hidden;
+    transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+               min-width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+               padding 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .sidebar.collapsed {
     width: 54px;
+    min-width: 54px;
     padding: var(--space-4) var(--space-2);
   }
 
@@ -176,21 +189,32 @@
 
   .sidebar.collapsed .sb-toggle {
     transform: scaleX(-1);
+    right: 50%;
+    translate: 50% 0;
   }
 
   .sb-header {
     padding: var(--space-2) 0;
     margin-top: var(--space-6);
+    overflow: hidden;
+    white-space: nowrap;
   }
 
   .sb-logo {
     color: var(--text-primary);
     letter-spacing: 0.5px;
+    transition: opacity 0.15s ease;
   }
 
   .sidebar.collapsed .sb-logo {
     opacity: 0;
     pointer-events: none;
+  }
+
+  .sidebar.collapsed .sb-header {
+    height: 0;
+    padding: 0;
+    margin: 0;
   }
 
   .sb-nav {
@@ -209,6 +233,8 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
+    overflow: hidden;
+    transition: height 0.25s ease, opacity 0.15s ease;
   }
 
   .sb-add-btn,
@@ -222,6 +248,7 @@
     font-size: var(--text-base);
     cursor: pointer;
     transition: all 0.15s ease;
+    white-space: nowrap;
   }
 
   .sb-add-btn:hover,
@@ -230,20 +257,43 @@
     border-color: var(--border-2);
   }
 
+  .sidebar.collapsed .sb-actions {
+    height: 0;
+    opacity: 0;
+    pointer-events: none;
+    margin: 0;
+    gap: 0;
+    overflow: hidden;
+  }
+
   .sidebar.collapsed .sb-add-btn,
   .sidebar.collapsed .sb-sync-btn {
     opacity: 0;
     pointer-events: none;
+    height: 0;
+    padding: 0;
+    margin: 0;
+    border: none;
   }
 
   .sb-platforms {
     padding: var(--space-3) 0;
+    overflow: hidden;
+    transition: height 0.25s ease, opacity 0.15s ease, padding 0.25s ease;
+  }
+
+  .sidebar.collapsed .sb-platforms {
+    height: 0;
+    opacity: 0;
+    padding: 0;
+    pointer-events: none;
   }
 
   .sb-platform-label {
     margin-bottom: var(--space-2);
     text-transform: uppercase;
     letter-spacing: 1px;
+    white-space: nowrap;
   }
 
   .sidebar.collapsed .sb-platform-label {
@@ -255,6 +305,11 @@
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
+    white-space: nowrap;
+  }
+
+  .sidebar.collapsed .sb-platform-item span:not(.sb-status-dot) {
+    display: none;
   }
 
   .sb-status-dot {
@@ -276,6 +331,8 @@
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
+    overflow: hidden;
+    white-space: nowrap;
   }
 
   .sb-user-avatar {
@@ -283,6 +340,7 @@
     height: 20px;
     border-radius: 50%;
     object-fit: cover;
+    flex-shrink: 0;
   }
 
   .sb-username {
@@ -290,14 +348,39 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    transition: opacity 0.15s ease;
   }
 
   .sidebar.collapsed .sb-username {
     opacity: 0;
+    width: 0;
     pointer-events: none;
   }
 
   .sidebar.collapsed .sb-user-avatar {
     margin: 0 auto;
+  }
+
+  /* Hide dividers in collapsed state to keep it clean */
+  .sidebar.collapsed .sb-divider {
+    margin: var(--space-1) 0;
+  }
+
+  /* Hide NavItem labels and count badges when collapsed (cross-component via :global) */
+  .sidebar.collapsed :global(.nav-label) {
+    display: none;
+  }
+
+  .sidebar.collapsed :global(.nav-count) {
+    display: none;
+  }
+
+  .sidebar.collapsed :global(.nav-item) {
+    justify-content: center;
+    padding: var(--space-2);
+  }
+
+  .sidebar.collapsed :global(.nav-icon) {
+    margin: 0;
   }
 </style>
