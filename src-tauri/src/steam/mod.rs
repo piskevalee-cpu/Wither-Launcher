@@ -15,6 +15,50 @@ use tauri::AppHandle;
 
 use crate::commands::steam::SyncResult;
 
+/// Known Steam tool/runtime AppIDs that should NOT be shown as games.
+/// These are compatibility tools, runtimes, and redistributables.
+const STEAM_TOOL_APP_IDS: &[u32] = &[
+    228980,  // Steamworks Common Redistributables
+    1070560, // Steam Linux Runtime 1.0 (scout)
+    1391110, // Steam Linux Runtime 2.0 (soldier)
+    1628350, // Steam Linux Runtime 3.0 (sniper)
+    1493710, // Proton Experimental
+    2180100, // Proton Hotfix
+    2348590, // Proton EasyAntiCheat Runtime
+    1887720, // Proton 7.0
+    2805730, // Proton 9.0
+    961940,  // Proton 3.16
+    1054830, // Proton 4.2
+    1580130, // Proton 5.13
+    1245040, // Proton 5.0
+    1420170, // Proton 6.3
+];
+
+/// Check if a Steam app is a tool/runtime rather than a game
+fn is_steam_tool(app_id: u32, name: &str) -> bool {
+    if STEAM_TOOL_APP_IDS.contains(&app_id) {
+        return true;
+    }
+    
+    let name_lower = name.to_lowercase();
+    
+    // Filter by name patterns
+    if name_lower.starts_with("proton ") || name_lower.starts_with("proton-") {
+        return true;
+    }
+    if name_lower.contains("steam linux runtime") {
+        return true;
+    }
+    if name_lower.contains("steamworks common") {
+        return true;
+    }
+    if name_lower.starts_with("steam client") {
+        return true;
+    }
+    
+    false
+}
+
 pub fn sync_steam_library(state: &tauri::State<'_, AppState>) -> Result<SyncResult, String> {
     let mut added = 0;
     let mut updated = 0;
@@ -106,6 +150,12 @@ pub fn sync_steam_library(state: &tauri::State<'_, AppState>) -> Result<SyncResu
 
     // Process installed games from .acf files
     for acf_game in &acf_games {
+        // Skip Steam tools/runtimes (Proton, Steam Linux Runtime, etc.)
+        if is_steam_tool(acf_game.app_id, &acf_game.name) {
+            info!("Skipping Steam tool: {} (AppID: {})", acf_game.name, acf_game.app_id);
+            continue;
+        }
+
         // Skip manually removed games
         if removed_app_ids.contains(&(acf_game.app_id as i64)) {
             info!("Skipping removed game: {} (AppID: {})", acf_game.name, acf_game.app_id);
@@ -289,7 +339,10 @@ fn fetch_game_metadata(app_id: u32) -> (Option<String>, Option<String>, Option<S
     // Fetch app details
     match runtime.block_on(fetch_app_details(app_id)) {
         Ok(Some(details)) => {
-            let cover = Some(get_cover_url(app_id));
+            // Prefer header_image from API (exists for virtually all games)
+            // Fall back to CDN library cover URL
+            let cover = details.header_image.clone()
+                .or_else(|| Some(get_cover_url(app_id)));
             let background = Some(get_background_url(app_id));
             let genre = details.genres
                 .and_then(|g| g.first().map(|g| g.description.clone()));
@@ -314,7 +367,9 @@ fn fetch_game_metadata_with_name(app_id: u32) -> (Option<String>, Option<String>
     // Fetch app details from Store API
     match runtime.block_on(fetch_app_details(app_id)) {
         Ok(Some(details)) => {
-            let cover = Some(get_cover_url(app_id));
+            // Prefer header_image from API (exists for virtually all games)
+            let cover = details.header_image.clone()
+                .or_else(|| Some(get_cover_url(app_id)));
             let background = Some(get_background_url(app_id));
             let genre = details.genres
                 .and_then(|g| g.first().map(|g| g.description.clone()));
@@ -411,6 +466,165 @@ fn get_steam_root() -> Option<PathBuf> {
     }
 
     None
+}
+
+/// Variation of sync_steam_library that takes Arc<Mutex<Database>> directly.
+/// Used by the async sync_steam command via spawn_blocking.
+pub fn sync_steam_library_with_db(
+    db_arc: &std::sync::Arc<std::sync::Mutex<crate::db::Database>>,
+) -> Result<SyncResult, String> {
+    let mut added = 0;
+    let mut updated = 0;
+    let mut removed = 0;
+    let mut errors = Vec::new();
+
+    // Get API key and SteamID from settings
+    let db = db_arc.lock().map_err(|e| e.to_string())?;
+    let conn = db.get_connection();
+
+    let api_key: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'steam_api_key'", [], |row| row.get(0))
+        .unwrap_or_default();
+
+    let steam_id: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'steam_user_id'", [], |row| row.get(0))
+        .unwrap_or_default();
+
+    drop(db);
+
+    info!("=== STEAM SYNC (async) STARTED ===");
+    info!("API Key present: {}", !api_key.is_empty());
+    info!("Steam ID: {}", if steam_id.is_empty() { "none" } else { &steam_id });
+
+    let steam_paths = get_all_steam_paths();
+
+    if steam_paths.is_empty() {
+        warn!("No Steam installation found");
+        return Ok(SyncResult {
+            added: 0, updated: 0, removed: 0,
+            errors: vec!["Steam installation not found".to_string()],
+            synced_at: Utc::now().timestamp(),
+        });
+    }
+
+    info!("Found {} Steam library paths", steam_paths.len());
+    for path in &steam_paths {
+        info!("  - {:?}", path);
+    }
+
+    let acf_games = scan_all_libraries(&steam_paths);
+    info!("Found {} installed games from .acf files", acf_games.len());
+
+    let mut api_game_ids = Vec::new();
+    if !api_key.is_empty() && !steam_id.is_empty() {
+        info!("Fetching owned games from Steam API...");
+        match tokio::runtime::Runtime::new()
+            .map_err(|e| e.to_string())?
+            .block_on(fetch_owned_games(&api_key, &steam_id))
+        {
+            Ok(owned) => {
+                info!("Fetched {} owned games from API", owned.games.len());
+                api_game_ids = owned.games.iter().map(|g| g.appid).collect();
+            }
+            Err(e) => {
+                warn!("Failed to fetch owned games: {}", e);
+                errors.push(format!("API fetch failed: {}", e));
+            }
+        }
+    }
+
+    let mut db = db_arc.lock().map_err(|e| e.to_string())?;
+    let conn = db.get_connection_mut();
+    let now = Utc::now().timestamp();
+
+    let mut seen_app_ids = Vec::new();
+
+    let removed_app_ids: Vec<i64> = conn
+        .prepare("SELECT steam_app_id FROM steam_removed_games")
+        .map_err(|e| e.to_string())?
+        .query_map([], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    for acf_game in &acf_games {
+        // Skip Steam tools/runtimes (Proton, Steam Linux Runtime, etc.)
+        if is_steam_tool(acf_game.app_id, &acf_game.name) {
+            info!("Skipping Steam tool: {} (AppID: {})", acf_game.name, acf_game.app_id);
+            continue;
+        }
+
+        if removed_app_ids.contains(&(acf_game.app_id as i64)) {
+            continue;
+        }
+        seen_app_ids.push(acf_game.app_id);
+        let game_id = format!("steam_{}", acf_game.app_id);
+
+        let exists: bool = conn
+            .query_row("SELECT 1 FROM games WHERE id = ?", params![game_id], |row| row.get(0))
+            .unwrap_or(0) != 0;
+
+        let (cover_url, background_url, genre, developer) =
+            fetch_game_metadata(acf_game.app_id);
+
+        if exists {
+            let is_installed_flag = if acf_game.state_flags == 4 || acf_game.state_flags == 6 { 1 } else { 0 };
+            let _ = conn.execute(
+                "UPDATE games SET name = ?, is_installed = ?, cover_url = ?, background_url = ?, genre = ?, developer = ?, last_synced_at = ? WHERE id = ?",
+                params![acf_game.name, is_installed_flag, cover_url, background_url, genre, developer, now, game_id],
+            );
+            updated += 1;
+        } else {
+            let _ = conn.execute(
+                "INSERT INTO games (id, name, source, drm_type, launch_method, steam_app_id, is_installed, cover_url, background_url, genre, developer, added_at, last_synced_at) VALUES (?, ?, 'steam', 'steam', 'steam_protocol', ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![game_id, acf_game.name, acf_game.app_id as i64, if acf_game.state_flags == 4 || acf_game.state_flags == 6 { 1 } else { 0 }, cover_url, background_url, genre, developer, now, now],
+            );
+            added += 1;
+        }
+
+        std::thread::sleep(Duration::from_millis(300));
+    }
+
+    for app_id in &api_game_ids {
+        if removed_app_ids.contains(&(*app_id as i64)) { continue; }
+        if !seen_app_ids.contains(app_id) {
+            let game_id = format!("steam_{}", app_id);
+            let exists: bool = conn
+                .query_row("SELECT 1 FROM games WHERE id = ?", params![game_id], |row| row.get(0))
+                .unwrap_or(0) != 0;
+
+            if !exists {
+                let (cover_url, background_url, genre, developer, game_name) = fetch_game_metadata_with_name(*app_id);
+                let _ = conn.execute(
+                    "INSERT INTO games (id, name, source, drm_type, launch_method, steam_app_id, is_installed, cover_url, background_url, genre, developer, added_at, last_synced_at) VALUES (?, ?, 'steam', 'steam', 'steam_protocol', ?, 0, ?, ?, ?, ?, ?, ?)",
+                    params![game_id, game_name, *app_id as i64, cover_url, background_url, genre, developer, now, now],
+                );
+                added += 1;
+            }
+            seen_app_ids.push(*app_id);
+            std::thread::sleep(Duration::from_millis(300));
+        }
+    }
+
+    let steam_games: Vec<i64> = conn
+        .prepare("SELECT steam_app_id FROM games WHERE source = 'steam'")
+        .map_err(|e| e.to_string())?
+        .query_map([], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    for app_id in steam_games {
+        if !seen_app_ids.contains(&(app_id as u32)) {
+            let _ = conn.execute("UPDATE games SET is_installed = 0 WHERE steam_app_id = ?", params![app_id]);
+            removed += 1;
+        }
+    }
+
+    info!("=== STEAM SYNC (async) COMPLETE ===");
+    info!("Added: {}, Updated: {}, Removed: {}", added, updated, removed);
+
+    Ok(SyncResult { added, updated, removed, errors, synced_at: Utc::now().timestamp() })
 }
 
 pub fn background_sync(_app_handle: &AppHandle) {

@@ -68,7 +68,7 @@
 
   .app-layout {
     display: grid;
-    grid-template-columns: 220px 1fr;
+    grid-template-columns: auto 1fr;
     grid-template-rows: 1fr auto;
     height: 100vh;
     background: var(--bg-root);

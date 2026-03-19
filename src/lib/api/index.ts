@@ -64,3 +64,31 @@ export async function clearRemovedSteamGames(): Promise<number> {
 export async function readAcfFile(appId: number): Promise<string> {
   return invoke<string>('read_acf_file', { appId });
 }
+
+export interface ProtonVersion {
+  name: string;
+  path: string;
+  version: string | null;
+  source: string;
+}
+
+export async function getProtonVersions(): Promise<ProtonVersion[]> {
+  return invoke<ProtonVersion[]>('get_proton_versions');
+}
+
+export interface ProtonGeRelease {
+  tag_name: string;
+  name: string;
+  download_url: string;
+  size_bytes: number;
+  published_at: string;
+  is_installed: boolean;
+}
+
+export async function getProtonGeReleases(): Promise<ProtonGeRelease[]> {
+  return invoke<ProtonGeRelease[]>('get_proton_ge_releases');
+}
+
+export async function downloadProtonGe(downloadUrl: string, tagName: string): Promise<string> {
+  return invoke<string>('download_proton_ge', { downloadUrl, tagName });
+}
