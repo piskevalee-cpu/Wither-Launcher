@@ -1,7 +1,7 @@
 // src/lib/stores/libraryStore.ts
 // Module 12 — Library Store with Filters & Search
 
-import { writable, derived, get } from 'svelte/store'
+import { writable, derived, get, type Writable } from 'svelte/store'
 import { invoke } from '@tauri-apps/api/core'
 import type { Game } from '$lib/types'
 
@@ -23,7 +23,24 @@ function isSteamTool(name: string): boolean {
 }
 
 // ── Raw data ──────────────────────────────────────────────────
-export const games = writable<Game[]>([])
+export interface GamesStore extends Writable<Game[]> {
+  addGame: (game: Game) => void;
+  updateGame: (id: string, partial: Partial<Game>) => void;
+  removeGame: (id: string) => void;
+}
+
+function createGamesStore(): GamesStore {
+  const { subscribe, set, update } = writable<Game[]>([])
+  return {
+    subscribe,
+    set,
+    update,
+    addGame: (game: Game) => update(gs => [...gs, game]),
+    updateGame: (id: string, partial: Partial<Game>) => update(gs => gs.map(g => g.id === id ? { ...g, ...partial } : g)),
+    removeGame: (id: string) => update(gs => gs.filter(g => g.id !== id))
+  }
+}
+export const games = createGamesStore()
 export const isLoading = writable<boolean>(false)
 
 // ── Search ────────────────────────────────────────────────────

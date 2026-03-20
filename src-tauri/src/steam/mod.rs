@@ -386,7 +386,7 @@ fn fetch_game_metadata_with_name(app_id: u32) -> (Option<String>, Option<String>
 }
 
 /// Get all Steam library paths from registry and libraryfolders.vdf
-fn get_all_steam_paths() -> Vec<PathBuf> {
+pub fn get_all_steam_paths() -> Vec<PathBuf> {
     let mut all_paths = Vec::new();
 
     // Get main Steam path

@@ -85,30 +85,32 @@
   </button>
 
   <div class="sb-header">
-    <span class="sb-logo text-mono text-logo font-semibold">Wither</span>
+    <span class="sb-logo text-sans font-medium">Wither Launcher</span>
   </div>
 
   <nav class="sb-nav">
-    <NavItem href="/" icon="◈" label="Home" count={totalGames} />
-    <NavItem href="/library" icon="▤" label="Library" />
-    <NavItem href="/recent" icon="◷" label="Recent" />
-    <NavItem href="/stats" icon="📊" label="Stats" />
+    <NavItem href="/" icon={`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>`} label="Home" count={totalGames} />
+    <NavItem href="/library" icon={`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>`} label="Library" />
+    <NavItem href="/recent" icon={`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`} label="Recent" />
+    <NavItem href="/stats" icon={`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"></line><line x1="18" y1="20" x2="18" y2="4"></line><line x1="6" y1="20" x2="6" y2="16"></line></svg>`} label="Stats" />
   </nav>
 
   <div class="sb-divider"></div>
 
   <nav class="sb-nav">
-    <NavItem href="/store" icon="🛒" label="Steam Store" />
+    <NavItem href="/store" icon={`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"></path><line x1="3" y1="6" x2="21" y2="6"></line><path d="M16 10a4 4 0 0 1-8 0"></path></svg>`} label="Steam Store" />
   </nav>
 
   <div class="sb-divider"></div>
 
   <div class="sb-actions">
-    <button class="sb-add-btn" onclick={handleAddGame}>
-      + Add Game
+    <button class="sb-btn" onclick={handleAddGame}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+      <span>Add Game</span>
     </button>
-    <button class="sb-sync-btn" onclick={handleSyncSteam}>
-      ↻ Sync Steam
+    <button class="sb-btn" onclick={handleSyncSteam}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+      <span>Sync Steam</span>
     </button>
   </div>
 
@@ -123,7 +125,7 @@
   </div>
 
   <div class="sb-footer">
-    <NavItem href="/settings" icon="⚙" label="Settings" />
+    <NavItem href="/settings" icon={`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`} label="Settings" />
     
     {#if steamUser}
       <div class="sb-user-row">
@@ -194,8 +196,11 @@
   }
 
   .sb-header {
-    padding: var(--space-2) 0;
-    margin-top: var(--space-6);
+    height: 54px;
+    display: flex;
+    align-items: center;
+    margin-top: calc(-1 * var(--space-4));
+    margin-bottom: var(--space-2);
     overflow: hidden;
     white-space: nowrap;
   }
@@ -237,22 +242,24 @@
     transition: height 0.25s ease, opacity 0.15s ease;
   }
 
-  .sb-add-btn,
-  .sb-sync-btn {
+  .sb-btn {
     background: var(--bg-s1);
     border: 1px solid var(--border-1);
     color: var(--text-primary);
     padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-pill);
-    font-family: var(--font-mono);
+    font-family: var(--font-sans);
     font-size: var(--text-base);
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.15s ease;
     white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
   }
 
-  .sb-add-btn:hover,
-  .sb-sync-btn:hover {
+  .sb-btn:hover {
     background: var(--bg-s2);
     border-color: var(--border-2);
   }
@@ -266,8 +273,7 @@
     overflow: hidden;
   }
 
-  .sidebar.collapsed .sb-add-btn,
-  .sidebar.collapsed .sb-sync-btn {
+  .sidebar.collapsed .sb-btn {
     opacity: 0;
     pointer-events: none;
     height: 0;

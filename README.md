@@ -14,7 +14,7 @@ A cross-platform game launcher with Steam integration, custom game support, loca
 - **GE-Proton Manager**: Download and manage GE-Proton versions directly from Settings
 - **Playtime Tracking**: Local session tracking with Steam playtime import
 - **Silent Steam Launch**: Auto-starts Steam when needed, auto-shutdown when done
-- **Steam Store**: Browse Featured, Top Sellers, New Releases, and Specials
+- **Steam Store**: Search for games and view detailed information (descriptions, pricing, screenshots, trailers) natively within Wither without opening Steam.
 - **Cover Art Fallback**: Multi-layer cover art fetching ensures images display for all games
 - **Modern UI**: Monochromatic design with glassmorphism effects and collapsible sidebar
 - **System Tray**: Minimize to tray with background game tracking

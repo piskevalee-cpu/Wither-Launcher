@@ -59,3 +59,13 @@ coverage/
 
 # TypeScript cache
 *.tsbuildinfo
+
+# Project specific logs and artifacts
+check.log
+build_err.txt
+.gemini/
+brain/
+implementation_plan.md
+walkthrough.md
+task.md
+

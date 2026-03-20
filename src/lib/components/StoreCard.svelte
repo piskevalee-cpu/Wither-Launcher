@@ -3,7 +3,7 @@
   import { launchGame } from '$lib/api';
   import { games, isInLibrary, openInSteamStore } from '$lib/stores';
 
-  let { item, inLibrary = false }: { item: FeaturedItem | SearchItem, inLibrary?: boolean } = $props();
+  let { item, inLibrary = false, onSelect }: { item: FeaturedItem | SearchItem, inLibrary?: boolean, onSelect?: (id: number) => void } = $props();
   let isLaunching = $state(false);
 
   // Format price with currency
@@ -48,8 +48,12 @@
     }
   }
 
-  function handleViewInSteam() {
-    openInSteamStore(item.id);
+  function handleViewDetails() {
+    if (onSelect) {
+      onSelect(item.id);
+    } else {
+      openInSteamStore(item.id);
+    }
   }
 </script>
 
@@ -86,8 +90,8 @@
           {/if}
         </button>
       {:else}
-        <button class="view-btn" onclick={handleViewInSteam}>
-          View in Steam →
+        <button class="view-btn" onclick={handleViewDetails}>
+          View Details
         </button>
       {/if}
     </div>

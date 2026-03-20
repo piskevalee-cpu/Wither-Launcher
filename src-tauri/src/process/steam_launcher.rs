@@ -33,46 +33,33 @@ pub struct ProtonVersion {
     pub source: String, // "custom" or "steam"
 }
 
-/// Check if Steam is running
+/// Check if Steam is running.
+/// Iterates all system processes for reliable matching on Windows
+/// where sysinfo's processes_by_name does exact-name matching.
 pub fn steam_is_running() -> bool {
     let mut system = System::new();
-    system.refresh_processes_specifics(
-        ProcessRefreshKind::new()
-            .with_exe(UpdateKind::OnlyIfNotSet)
-    );
+    system.refresh_processes();
 
-    #[cfg(target_os = "windows")]
-    {
-        let result = system.processes_by_name("steam")
-            .any(|p| {
-                let name = p.name().to_lowercase();
-                !name.contains("steamwebhelper")
-            });
-        result
+    for (_pid, process) in system.processes() {
+        let name = process.name().to_lowercase();
+
+        // Skip helper/service processes
+        if name.contains("steamwebhelper") ||
+           name.contains("steamservice") ||
+           name.contains("steamerrorreporter") ||
+           name == "steamcmd" || name == "steamcmd.exe"
+        {
+            continue;
+        }
+
+        // Match main Steam process
+        if name == "steam" || name == "steam.exe" || name == "steam.sh" {
+            info!("Steam detected as running (process: {})", name);
+            return true;
+        }
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        let result = system.processes_by_name("steam")
-            .any(|p| {
-                let name = p.name().to_lowercase();
-                // Exclude helper processes
-                !name.contains("steamwebhelper") &&
-                name != "steamcmd" &&
-                !name.contains("steamerror")
-            });
-        result
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let result = system.processes_by_name("steam")
-            .any(|p| {
-                let name = p.name().to_lowercase();
-                !name.contains("steamwebhelper")
-            });
-        result
-    }
+    false
 }
 
 /// Find Steam executable path
@@ -196,12 +183,16 @@ pub async fn wait_for_steam_ready(timeout: Duration) -> Result<(), String> {
         }
 
         let mut system = System::new();
-        system.refresh_processes_specifics(
-            ProcessRefreshKind::new()
-                .with_exe(UpdateKind::OnlyIfNotSet)
-        );
+        system.refresh_processes();
 
-        let ready = system.processes_by_name("steamwebhelper").count() > 0;
+        let mut ready = false;
+        for (_pid, process) in system.processes() {
+            let name = process.name().to_lowercase();
+            if name.contains("steamwebhelper") {
+                ready = true;
+                break;
+            }
+        }
 
         if ready {
             // Extra buffer: Steam needs ~1.5s after webhelper appears
@@ -218,9 +209,14 @@ pub async fn wait_for_steam_ready(timeout: Duration) -> Result<(), String> {
 pub fn get_exe_hints(game_name: &str, install_dir: Option<&str>) -> Vec<String> {
     let mut hints = Vec::new();
 
-    // From install directory
+    // From install directory — scan for actual executables
     if let Some(dir) = install_dir {
-        hints.push(dir.to_lowercase());
+        let dir_hints = get_exe_hints_from_install_dir(std::path::Path::new(dir));
+        hints.extend(dir_hints);
+        // Also use the install dir name itself as a hint
+        if let Some(dir_name) = std::path::Path::new(dir).file_name() {
+            hints.push(dir_name.to_string_lossy().to_lowercase());
+        }
     }
 
     // From game name
@@ -229,7 +225,65 @@ pub fn get_exe_hints(game_name: &str, install_dir: Option<&str>) -> Vec<String> 
     hints.push(name_lower.replace(" ", ""));
     hints.push(name_lower.replace(" ", "_"));
 
+    // Deduplicate
+    hints.sort();
+    hints.dedup();
+
     hints
+}
+
+/// Scan a game's install directory for executable files and return their
+/// base names (without extension) as process-detection hints.
+/// Scans recursively up to a depth of 3 to find binaries in subfolders like `bin/`.
+pub fn get_exe_hints_from_install_dir(install_dir: &std::path::Path) -> Vec<String> {
+    let mut hints = Vec::new();
+    find_exes_recursive(install_dir, 0, &mut hints);
+    hints.sort();
+    hints.dedup();
+    hints
+}
+
+fn find_exes_recursive(dir: &std::path::Path, depth: u8, hints: &mut Vec<String>) {
+    if depth > 3 { return; }
+
+    let excluded = ["unins", "setup", "redist", "vc_", "dxsetup", "crashpad",
+                    "dotnet", "vcredist", "directx", "_commonredist", "lsi_server"];
+
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+
+            if path.is_dir() {
+                find_exes_recursive(&path, depth + 1, hints);
+                continue;
+            }
+
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+
+            #[cfg(target_os = "windows")]
+            {
+                if name.ends_with(".exe") {
+                    if !excluded.iter().any(|e| name.contains(e)) {
+                        hints.push(name.trim_end_matches(".exe").to_string());
+                    }
+                }
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                if path.is_file() {
+                    if let Ok(metadata) = std::fs::metadata(&path) {
+                        use std::os::unix::fs::PermissionsExt;
+                        if metadata.permissions().mode() & 0o111 != 0 {
+                            if !excluded.iter().any(|e| name.contains(e)) && !name.contains(".") {
+                                hints.push(name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Wait for game process to appear
@@ -355,39 +409,83 @@ pub async fn watch_and_save_session(
 }
 
 /// Shut down Steam (cross-platform)
+/// Uses multiple methods for maximum reliability.
 async fn shutdown_steam() {
     info!("=== SHUTTING DOWN STEAM ===");
 
-    // Method 1: steam://exit protocol
-    info!("Trying steam://exit protocol...");
-    let _ = open::that("steam://exit");
-
-    tokio::time::sleep(Duration::from_secs(3)).await;
-
-    // Method 2: Kill Steam processes
-    info!("Killing Steam processes...");
-    let mut system = System::new();
-    system.refresh_processes();
-    let mut killed = 0;
-
-    for (pid, process) in system.processes() {
-        let name = process.name().to_lowercase();
-
-        #[cfg(target_os = "windows")]
-        let is_steam_main = name == "steam.exe" ||
-            (name.contains("steam") && !name.contains("steamwebhelper"));
-
-        #[cfg(not(target_os = "windows"))]
-        let is_steam_main = (name == "steam" || name == "steam.sh") &&
-            !name.contains("steamwebhelper");
-
-        if is_steam_main {
-            info!("Killing Steam process: {} (PID: {})", name, pid);
-            process.kill();
-            killed += 1;
+    // Step 1: Try BOTH shutdown methods simultaneously for reliability.
+    // Method A: steam -shutdown command (clean exit, saves state)
+    let steam_exe = find_steam_exe();
+    if let Some(exe) = &steam_exe {
+        info!("Sending steam -shutdown via {:?}", exe);
+        match std::process::Command::new(exe)
+            .arg("-shutdown")
+            .spawn()
+        {
+            Ok(_) => info!("steam -shutdown command sent"),
+            Err(e) => error!("Failed to send steam -shutdown: {}", e),
         }
     }
-    info!("Killed {} Steam process(es)", killed);
+
+    // Method B: steam://exit protocol (backup)
+    info!("Also sending steam://exit protocol...");
+    let _ = open::that("steam://exit");
+
+    // Step 2: Wait up to 10 seconds for Steam to exit gracefully.
+    let deadline = Instant::now() + Duration::from_secs(10);
+
+    loop {
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+
+        if !steam_is_running() {
+            info!("Steam closed cleanly.");
+            return;
+        }
+
+        if Instant::now() > deadline {
+            // Steam did not close in time — force kill.
+            info!("Steam did not close within 10s, force killing...");
+            force_kill_steam();
+            return;
+        }
+    }
+}
+
+/// Force-kill all Steam processes using OS-level commands.
+fn force_kill_steam() {
+    info!("Force-killing Steam processes...");
+
+    #[cfg(target_os = "windows")]
+    {
+        // taskkill is the most reliable way to kill processes on Windows
+        let targets = ["steam.exe"];
+        for target in &targets {
+            info!("Running: taskkill /f /im {}", target);
+            match std::process::Command::new("taskkill")
+                .args(["/f", "/im", target])
+                .output()
+            {
+                Ok(output) => {
+                    if output.status.success() {
+                        info!("Successfully killed {}", target);
+                    } else {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        info!("taskkill {} result: {}", target, stderr.trim());
+                    }
+                }
+                Err(e) => error!("Failed to run taskkill: {}", e),
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Use pkill on Linux/macOS
+        let _ = std::process::Command::new("pkill")
+            .args(["-f", "steam"])
+            .output();
+        info!("Sent pkill -f steam");
+    }
 }
 
 /// Get all available Proton versions on the system

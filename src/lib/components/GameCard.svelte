@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Game } from '$lib/types';
   import { launchGame } from '$lib/api';
-  import { games, ui, launchState, isGameRunning, elapsedSeconds, removeGame } from '$lib/stores';
+  import { games, ui, launchState, isGameRunning, elapsedSeconds, STATUS_LABELS, removeGame, resetLaunchState } from '$lib/stores';
   import EditGameModal from './EditGameModal.svelte';
 
   let { game, isMostRecent = false } = $props();
@@ -12,6 +12,15 @@
   let runningGameId = $derived($launchState.game_id);
   let isThisGameRunning = $derived(runningGameId === game.id && $launchState.status === 'running');
   let elapsed = $derived(isThisGameRunning ? $elapsedSeconds : 0);
+
+  // Check if this game is in an intermediate launch state (spinner states)
+  let isThisGameLaunching = $derived(
+    runningGameId === game.id && 
+    ['starting_steam', 'waiting_for_steam', 'launching_game'].includes($launchState.status)
+  );
+  let launchStatusLabel = $derived(
+    isThisGameLaunching ? STATUS_LABELS[$launchState.status] : ''
+  );
   
   // Reset isLaunching when game actually starts running or exits
   $effect(() => {
@@ -34,15 +43,8 @@
   // Convert file path to web-accessible URL
   function getCoverDisplayUrl(path: string | null): string {
     if (!path) return '/placeholder-cover.jpg';
-    // If it's already a data URL (base64), return as-is
-    if (path.startsWith('data:')) {
-      return path;
-    }
-    // If it's http/https, return as-is
-    if (path.startsWith('http://') || path.startsWith('https://')) {
-      return path;
-    }
-    // For local paths, we can't load them directly, show placeholder
+    if (path.startsWith('data:')) return path;
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
     return '/placeholder-cover.jpg';
   }
 
@@ -51,7 +53,6 @@
   
   function handleCoverError() {
     if (!coverFailed && game.steam_app_id) {
-      // Try Steam CDN header image as fallback
       coverFailed = true;
       const headerUrl = `https://cdn.cloudflare.steamstatic.com/steam/apps/${game.steam_app_id}/header.jpg`;
       const img = document.querySelector(`[data-game-id="${game.id}"] img`) as HTMLImageElement;
@@ -70,13 +71,17 @@
   const isContextMenuOpen = $derived($ui.contextMenuGameId === game.id);
 
   async function handleLaunch() {
-    if (isLaunching || isThisGameRunning) return;
+    if (isLaunching || isThisGameRunning || isThisGameLaunching) return;
     isLaunching = true;
     try {
       await launchGame(game.id);
     } catch (error) {
       console.error('Failed to launch game:', error);
       isLaunching = false;
+      // If launch fails, reset global status so it doesn't stay stuck on "Loading game..."
+      if ($launchState.game_id === game.id) {
+        resetLaunchState();
+      }
     }
   }
 
@@ -122,12 +127,14 @@
 <div class="game-card" data-game-id={game.id} oncontextmenu={handleContextMenu}>
   <div class="card-image">
     <img src={coverUrl} alt={game.name} onerror={handleCoverError} />
-    <div class="card-overlay">
-      <button class="play-button" onclick={handleLaunch} disabled={isLaunching || isThisGameRunning}>
-        {#if isLaunching}
-          Launching...
+    <div class="card-overlay" class:overlay-visible={isThisGameLaunching || isThisGameRunning}>
+      <button class="play-button" onclick={handleLaunch} disabled={isLaunching || isThisGameRunning || isThisGameLaunching}>
+        {#if isThisGameLaunching}
+          <span class="spinner"></span> {launchStatusLabel}
+        {:else if isLaunching}
+          <span class="spinner"></span> Launching...
         {:else if isThisGameRunning}
-          ⏱ {formatElapsed(elapsed)}
+          <span class="running-dot"></span> {formatElapsed(elapsed)}
         {:else if game.source === 'steam' && !game.is_installed}
           ⬇ Install
         {:else}
@@ -220,7 +227,8 @@
     transition: opacity 0.15s ease;
   }
 
-  .game-card:hover .card-overlay {
+  .game-card:hover .card-overlay,
+  .card-overlay.overlay-visible {
     opacity: 1;
   }
 
@@ -250,6 +258,36 @@
   .play-button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* Spinner for intermediate launch states */
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Green dot for running state */
+  .running-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background: var(--status-synced, #4ade80);
+    border-radius: 50%;
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
   }
 
   .last-played-badge {

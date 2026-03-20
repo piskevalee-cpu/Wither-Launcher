@@ -6,7 +6,7 @@
 </script>
 
 <a href={href} class="nav-item" class:active={isActive}>
-  <span class="nav-icon">{icon}</span>
+  <span class="nav-icon">{@html icon}</span>
   <span class="nav-label text-sans text-md">{label}</span>
   {#if count !== undefined && count > 0}
     <span class="nav-count text-mono text-xs">{count}</span>
@@ -20,25 +20,29 @@
     gap: var(--space-3);
     padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-md);
-    color: var(--color-text-secondary);
+    color: var(--text-secondary);
     transition: all 0.15s ease;
     cursor: pointer;
+    text-decoration: none;
   }
 
   .nav-item:hover {
-    background: var(--color-bg-2);
-    color: var(--color-text-primary);
+    background: var(--bg-s2);
+    color: var(--text-primary);
   }
 
   .nav-item.active {
-    background: var(--color-bg-3);
-    color: var(--color-text-primary);
+    background: var(--bg-s3);
+    color: var(--text-primary);
   }
 
   .nav-icon {
     font-size: var(--text-lg);
     width: 20px;
-    text-align: center;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .nav-label {
@@ -46,14 +50,14 @@
   }
 
   .nav-count {
-    background: var(--color-bg-2);
+    background: var(--bg-s1);
     padding: 2px var(--space-2);
     border-radius: var(--radius-sm);
-    color: var(--color-text-tertiary);
+    color: var(--text-tertiary);
   }
 
   .nav-item.active .nav-count {
-    background: var(--color-accent);
-    color: var(--color-text-primary);
+    background: var(--text-primary);
+    color: var(--bg-root);
   }
 </style>

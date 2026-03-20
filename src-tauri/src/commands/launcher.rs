@@ -81,8 +81,28 @@ pub async fn launch_game(
         open::that(format!("steam://rungameid/{}", app_id))
             .map_err(|e| format!("Failed to launch game: {}", e))?;
 
+        // Resolve game install directory from ACF manifest for better exe hints
+        let install_dir_str: Option<String> = {
+            let steam_roots = crate::steam::get_all_steam_paths();
+            let mut found_dir = None;
+            for root in &steam_roots {
+                let steamapps = root.join("steamapps");
+                let acf_path = steamapps.join(format!("appmanifest_{}.acf", app_id));
+                if acf_path.exists() {
+                    if let Ok(acf) = crate::steam::acf_parser::parse_acf_file(&acf_path) {
+                        let full_path = steamapps.join("common").join(&acf.install_dir);
+                        if full_path.exists() {
+                            found_dir = Some(full_path.to_string_lossy().to_string());
+                        }
+                    }
+                    break;
+                }
+            }
+            found_dir
+        };
+
         // Wait for game process
-        let exe_hints = steam_launcher::get_exe_hints(&name, None);
+        let exe_hints = steam_launcher::get_exe_hints(&name, install_dir_str.as_deref());
         let game_pid = steam_launcher::wait_for_game_process(
             &exe_hints,
             std::time::Duration::from_secs(30),

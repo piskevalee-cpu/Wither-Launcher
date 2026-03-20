@@ -1,8 +1,6 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount } from 'svelte'
-  const dispatch = createEventDispatcher()
-
-  export let activeFilters: string[] = []
+  import { onMount } from 'svelte'
+  import { activeFilters } from '$lib/stores'
 
   const OPTIONS = [
     { key: 'owned',     label: 'Owned' },
@@ -15,12 +13,13 @@
   let open = false
 
   function toggle(key: string) {
-    if (activeFilters.includes(key)) {
-      activeFilters = activeFilters.filter(f => f !== key)
-    } else {
-      activeFilters = [...activeFilters, key]
-    }
-    dispatch('change', { filters: activeFilters })
+    activeFilters.update(filters => {
+      if (filters.includes(key)) {
+        return filters.filter(f => f !== key)
+      } else {
+        return [...filters, key]
+      }
+    })
   }
 
   function handleOutsideClick(e: MouseEvent) {
@@ -34,11 +33,11 @@
 </script>
 
 <div class="filter-wrapper" style="position: relative;">
-  <button class="tb-btn" class:active={activeFilters.length > 0} onclick={() => open = !open}>
+  <button class="tb-btn" class:active={$activeFilters.length > 0} onclick={() => open = !open}>
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3">
       <path d="M1 3h10M3 6h6M5 9h2"/>
     </svg>
-    Filter{activeFilters.length > 0 ? ` · ${activeFilters.length}` : ''}
+    Filter{$activeFilters.length > 0 ? ` · ${$activeFilters.length}` : ''}
   </button>
 
   {#if open}
@@ -46,11 +45,11 @@
       {#each OPTIONS as opt}
         <div
           class="filter-option"
-          class:active={activeFilters.includes(opt.key)}
+          class:active={$activeFilters.includes(opt.key)}
           onclick={() => toggle(opt.key)}
         >
           <div class="filter-checkbox">
-            {#if activeFilters.includes(opt.key)}
+            {#if $activeFilters.includes(opt.key)}
               <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="#000" stroke-width="1.6">
                 <path d="M1.5 4.5l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>

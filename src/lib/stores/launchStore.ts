@@ -34,6 +34,10 @@ const INITIAL: LaunchState = {
 
 export const launchState = writable<LaunchState>(INITIAL)
 
+export function resetLaunchState() {
+  launchState.set(INITIAL)
+}
+
 // Human-readable status messages for the UI
 export const STATUS_LABELS: Record<LaunchStatus, string> = {
   idle:              '',
@@ -51,20 +55,41 @@ export const isGameRunning = derived(
   $s => $s.status === 'running'
 )
 
-// Derived: elapsed time for running game (client-side timer)
-export const elapsedSeconds = derived(
-  launchState,
-  $s => {
-    if ($s.status !== 'running' || !$s.started_at) return 0
-    return Math.floor(Date.now() / 1000 - $s.started_at)
+// Live elapsed timer — ticks every second while a game is running
+export const elapsedSeconds = writable(0)
+
+let _timerInterval: ReturnType<typeof setInterval> | null = null
+
+function startTimer(started_at: number) {
+  stopTimer()
+  _timerInterval = setInterval(() => {
+    const secs = Math.floor(Date.now() / 1000) - started_at
+    elapsedSeconds.set(secs)
+  }, 1000)
+  // Set initial value immediately
+  elapsedSeconds.set(Math.floor(Date.now() / 1000) - started_at)
+}
+
+function stopTimer() {
+  if (_timerInterval) {
+    clearInterval(_timerInterval)
+    _timerInterval = null
   }
-)
+  elapsedSeconds.set(0)
+}
 
 // Subscribe to backend launch state events
 export async function initLaunchListener(): Promise<void> {
   await listen<any>('game_launch_state', (event) => {
     const payload = event.payload
     launchState.set({ ...INITIAL, ...payload })
+
+    // Manage the live timer
+    if (payload.status === 'running' && payload.started_at) {
+      startTimer(payload.started_at)
+    } else if (payload.status !== 'running') {
+      stopTimer()
+    }
 
     // Auto-reset to idle 3s after game exits
     if (payload.status === 'exited') {

@@ -15,6 +15,7 @@ export interface Game {
   is_favourite: boolean;
   added_at: number;
   wither_playtime_s: number;
+  steam_playtime_s: number;
   last_played_at: number;
   session_count: number;
 }

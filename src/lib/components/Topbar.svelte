@@ -3,13 +3,7 @@
   import FilterDropdown from './FilterDropdown.svelte';
   import { addCustomGame } from '$lib/api';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { games, ui } from '$lib/stores';
-
-  let activeFilters: string[] = [];
-
-  function handleFilterChange(event: CustomEvent<{ filters: string[] }>) {
-    activeFilters = event.detail.filters;
-  }
+  import { games, ui, activeFilters } from '$lib/stores';
 
   async function handleAddGame() {
     try {
@@ -39,9 +33,11 @@
 </script>
 
 <header class="topbar">
-  <SearchBar />
+  {#if $ui.activeRoute !== '/store'}
+    <SearchBar />
+  {/if}
   
-  <FilterDropdown activeFilters={activeFilters} on:change={handleFilterChange} />
+  <FilterDropdown />
   
   <div class="tb-divider"></div>
   

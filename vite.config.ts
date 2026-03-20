@@ -10,7 +10,9 @@ export default defineConfig({
   },
   build: {
     target: ['es2022'],
+    // @ts-ignore
     minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
+    // @ts-ignore
     sourcemap: !!process.env.TAURI_DEBUG,
   },
 });
